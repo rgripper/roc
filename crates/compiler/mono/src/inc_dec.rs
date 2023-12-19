@@ -256,6 +256,7 @@ struct RefcountEnvironment<'v> {
     // The Koka implementation assumes everything that is not owned to be borrowed.
     symbols_ownership: SymbolsOwnership,
     jointpoint_closures: MutMap<JoinPointId, JoinPointConsumption>,
+    enable_borrowing_hacks: bool,
 }
 
 impl<'v> RefcountEnvironment<'v> {
@@ -305,10 +306,10 @@ impl<'v> RefcountEnvironment<'v> {
     /**
     Add a symbol to the environment if it is reference counted.
     */
-    fn add_symbol(&mut self, symbol: Symbol) {
+    fn add_symbol(&mut self, symbol: Symbol, ownership: Ownership) {
         match self.get_symbol_rc_type(&symbol) {
             VarRcType::ReferenceCounted => {
-                self.symbols_ownership.insert(symbol, Ownership::Owned);
+                self.symbols_ownership.insert(symbol, ownership);
             }
             VarRcType::NotReferenceCounted => {
                 // If this symbol is not reference counted, we don't need to do anything.
@@ -413,12 +414,24 @@ fn insert_inc_dec_operations_proc<'a>(
         symbols_rc_types: &symbol_rc_types_env.symbols_rc_type,
         symbols_ownership: MutMap::default(),
         jointpoint_closures: MutMap::default(),
+        enable_borrowing_hacks: false,
     };
 
     // Add all arguments to the environment (if they are reference counted)
     let proc_symbols = proc.args.iter().map(|(_layout, symbol)| symbol);
-    for symbol in proc_symbols.clone() {
-        environment.add_symbol(*symbol);
+    let borrow_signature = proc_borrow_signature(arena, proc.name.name());
+    if borrow_signature.is_empty() {
+        for symbol in proc_symbols.clone() {
+            environment.add_symbol(*symbol, Ownership::Owned);
+        }
+    } else {
+        dbg!(proc.name.name());
+        environment.enable_borrowing_hacks = true;
+        let arguments_with_borrow_signature =
+            proc_symbols.clone().zip(borrow_signature.iter().copied());
+        for (symbol, ownership) in arguments_with_borrow_signature {
+            environment.add_symbol(*symbol, ownership);
+        }
     }
 
     // Update the body with reference count statements.
@@ -474,8 +487,25 @@ fn insert_refcount_operations_stmt<'v, 'a>(
                 "All let bindings should be in the vector"
             );
 
-            for (binding, _, _) in triples.iter() {
-                environment.add_symbol(**binding); // Add the bound symbol to the environment. As it can be used in the continuation.
+            for (binding, expr, _) in triples.iter() {
+                // Add the bound symbol to the environment. As it can be used in the continuation.
+                environment.add_symbol(**binding, Ownership::Owned);
+                // Special case to manually extend borrowing.
+                if environment.enable_borrowing_hacks {
+                    match expr {
+                        Expr::GetTagId { structure, .. }
+                        | Expr::StructAtIndex { structure, .. }
+                        | Expr::UnionAtIndex { structure, .. }
+                        | Expr::GetElementPointer { structure, .. } => {
+                            if environment.get_symbol_ownership(structure)
+                                == Some(&Ownership::Borrowed)
+                            {
+                                environment.consume_symbol(binding);
+                            }
+                        }
+                        _ => {}
+                    };
+                }
             }
 
             triples
@@ -720,19 +750,31 @@ fn insert_refcount_operations_stmt<'v, 'a>(
         } => {
             // Assuming that the values in the closure of the body of this jointpoint are already bound.
             // Assuming that all symbols are still owned. (So that we can determine what symbols got consumed in the join point.)
-            debug_assert!(environment
-                .symbols_ownership
-                .iter()
-                .all(|(_, ownership)| ownership.is_owned()));
-
             let mut body_env = environment.clone();
-
             let parameter_symbols_set = parameters
                 .iter()
                 .map(|Param { symbol, .. }| *symbol)
                 .collect::<MutSet<_>>();
-            for symbol in parameter_symbols_set.iter().copied() {
-                body_env.add_symbol(symbol)
+            if body_env.enable_borrowing_hacks {
+                let borrow_signature = proc_borrow_signature(arena, joinpoint_id.0);
+                if borrow_signature.is_empty() {
+                    for symbol in parameter_symbols_set.iter().copied() {
+                        body_env.add_symbol(symbol, Ownership::Owned)
+                    }
+                } else {
+                    dbg!(joinpoint_id.0);
+                    let arguments_with_borrow_signature = parameter_symbols_set
+                        .iter()
+                        .copied()
+                        .zip(borrow_signature.iter().copied());
+                    for (symbol, ownership) in arguments_with_borrow_signature {
+                        body_env.add_symbol(symbol, ownership);
+                    }
+                }
+            } else {
+                for symbol in parameter_symbols_set.iter().copied() {
+                    body_env.add_symbol(symbol, Ownership::Owned)
+                }
             }
 
             /*
@@ -830,12 +872,28 @@ fn insert_refcount_operations_stmt<'v, 'a>(
             let new_jump = arena.alloc(Stmt::Jump(*joinpoint_id, arguments));
 
             // Note that this should only insert increments if a later join point has a current parameter as consumed closure.
-            consume_and_insert_inc_stmts(
-                arena,
-                environment,
-                environment.owned_usages(arguments.iter().copied()),
-                new_jump,
-            )
+            let borrow_signature = proc_borrow_signature(arena, joinpoint_id.0);
+            if environment.enable_borrowing_hacks && !borrow_signature.is_empty() {
+                let owned_args = arguments
+                    .iter()
+                    .copied()
+                    .zip(borrow_signature.iter().copied())
+                    .filter(|(_, ownership)| ownership.is_owned())
+                    .map(|(arg, _)| arg);
+                consume_and_insert_inc_stmts(
+                    arena,
+                    environment,
+                    environment.owned_usages(owned_args),
+                    new_jump,
+                )
+            } else {
+                consume_and_insert_inc_stmts(
+                    arena,
+                    environment,
+                    environment.owned_usages(arguments.iter().copied()),
+                    new_jump,
+                )
+            }
         }
         Stmt::Crash(symbol, crash_tag) => {
             // We don't have to worry about reference counting *after* the crash.
@@ -943,7 +1001,16 @@ fn insert_refcount_operations_binding<'a>(
                     Expr::StructAtIndex { .. }
                     | Expr::UnionAtIndex { .. }
                     | Expr::GetElementPointer { .. } => {
-                        insert_inc_stmt(arena, *binding, 1, new_stmt)
+                        // Pretend we checked this correctly. I am manually making sure this is safe.
+                        // As long as we can't return the value, the borrowing holds fine.
+                        if !environment.enable_borrowing_hacks
+                            || environment.get_symbol_ownership(structure)
+                                == Some(&Ownership::Owned)
+                        {
+                            insert_inc_stmt(arena, *binding, 1, new_stmt)
+                        } else {
+                            new_stmt
+                        }
                     }
                     // No usage of an element of a reference counted symbol. No need to increment.
                     Expr::GetTagId { .. } => new_stmt,
@@ -980,10 +1047,30 @@ fn insert_refcount_operations_binding<'a>(
             match call_type.clone().replace_lowlevel_wrapper() {
                 // A by name call refers to a normal function call.
                 // Normal functions take all their parameters as owned, so we can mark them all as such.
-                CallType::ByName { .. } => {
-                    let new_let = new_let!(stmt);
+                CallType::ByName { name, .. } => {
+                    let borrow_signature = proc_borrow_signature(arena, name.name());
+                    if borrow_signature.is_empty() {
+                        let new_let = new_let!(stmt);
 
-                    inc_owned!(arguments.iter().copied(), new_let)
+                        inc_owned!(arguments.iter().copied(), new_let)
+                    } else {
+                        debug_assert_eq!(borrow_signature.len(), arguments.len());
+                        // let borrow_signature = lowlevel_borrow_signature(arena, operator);
+                        let arguments_with_borrow_signature = arguments
+                            .iter()
+                            .copied()
+                            .zip(borrow_signature.iter().copied());
+                        let owned_arguments = arguments_with_borrow_signature.clone().filter_map(
+                            |(symbol, ownership)| ownership.is_owned().then_some(symbol),
+                        );
+                        let borrowed_arguments =
+                            arguments_with_borrow_signature.filter_map(|(symbol, ownership)| {
+                                ownership.is_borrowed().then_some(symbol)
+                            });
+                        let new_stmt = dec_borrowed!(borrowed_arguments, stmt);
+                        let new_let = new_let!(new_stmt);
+                        inc_owned!(owned_arguments, new_let)
+                    }
                 }
                 // A normal Roc function call, but we don't actually know where its target is.
                 // As such, we assume that it takes all parameters as owned, as will the function
@@ -1260,6 +1347,44 @@ fn insert_dec_stmt<'a>(
     continuation: &'a Stmt<'a>,
 ) -> &'a Stmt<'a> {
     arena.alloc(Stmt::Refcounting(ModifyRc::Dec(symbol), continuation))
+}
+
+fn proc_borrow_signature(arena: &Bump, name: Symbol) -> &[Ownership] {
+    let irrelevant = Ownership::Owned;
+    // let function = irrelevant;
+    // let closure_data = irrelevant;
+    let owned = Ownership::Owned;
+    let borrowed = Ownership::Borrowed;
+    match format!("{:?}", name).as_str() {
+        // TODO: technically the key can be borrowed too, but shouldn't matter in this case cause key is not refcounted.
+        "`Set.contains`" | "`Dict.contains`" | "`Dict.find`" => {
+            arena.alloc_slice_copy(&[borrowed, owned])
+        }
+        "`Dict.findFirstUnroll`" | "`Dict.findSecondUnroll`" | "`Dict.findHelper`" => {
+            arena.alloc_slice_copy(&[borrowed, irrelevant, irrelevant, borrowed, owned])
+        }
+        "`array2d.Array2D.get`" => arena.alloc_slice_copy(&[borrowed, irrelevant]),
+        "`array2d.Array2D.shape`" | "`Set.len`" | "`Dict.len`" | "`List.isEmpty`" => {
+            arena.alloc_slice_copy(&[borrowed])
+        }
+        "`List.get`" => arena.alloc_slice_copy(&[borrowed, irrelevant]),
+        "`#UserApp.parseDir`" => arena.alloc_slice_copy(&[borrowed, irrelevant, irrelevant]),
+        "`#UserApp.followBeam`" | "`#UserApp.162`" => {
+            arena.alloc_slice_copy(&[borrowed, owned, irrelevant, irrelevant])
+        }
+        // In this specific app, all List.map calls can borrow their closure captures
+        "`List.map`" => arena.alloc_slice_copy(&[owned, borrowed]),
+        "`#UserApp.116`" | "`#UserApp.101`" | "`#UserApp.106`" | "`#UserApp.111`" => {
+            arena.alloc_slice_copy(&[irrelevant, borrowed])
+        }
+        "`#UserApp.splitBeam`" => {
+            arena.alloc_slice_copy(&[borrowed, owned, irrelevant, irrelevant, irrelevant])
+        }
+        name => {
+            dbg!(name);
+            arena.alloc_slice_copy(&[])
+        }
+    }
 }
 
 /**
