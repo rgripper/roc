@@ -243,6 +243,7 @@ fn load_fixture(
 
 fn expect_types(mut loaded_module: LoadedModule, mut expected_types: HashMap<&str, &str>) {
     let home = loaded_module.module_id;
+    let declarations = loaded_module.declarations(home).unwrap().clone();
     let mut subs = loaded_module.solved.into_inner();
 
     assert_eq!(
@@ -258,7 +259,6 @@ fn expect_types(mut loaded_module: LoadedModule, mut expected_types: HashMap<&st
     let debug_print = DebugPrint::NOTHING;
 
     let interns = &loaded_module.interns;
-    let declarations = loaded_module.declarations_by_id.remove(&home).unwrap();
     for index in 0..declarations.len() {
         use roc_can::expr::DeclarationTag::*;
 
@@ -384,7 +384,7 @@ fn interface_with_deps() {
         .is_empty(),);
 
     let mut def_count = 0;
-    let declarations = loaded_module.declarations_by_id.remove(&home).unwrap();
+    let declarations = loaded_module.declarations(home).unwrap();
     for index in 0..declarations.len() {
         use roc_can::expr::DeclarationTag::*;
 
