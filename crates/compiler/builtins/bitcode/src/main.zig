@@ -85,6 +85,8 @@ comptime {
     exportListFn(list.listCapacity, "capacity");
     exportListFn(list.listAllocationPtr, "allocation_ptr");
     exportListFn(list.listReleaseExcessCapacity, "release_excess_capacity");
+    exportListFn(list.listIncref, "incref");
+    exportListFn(list.listDecref, "decref");
 }
 
 // Num Module
