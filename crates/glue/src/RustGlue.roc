@@ -10,8 +10,6 @@ app "rust-glue"
         "../../roc_std/src/lib.rs" as rocStdLib : Str,
         "../../roc_std/src/roc_box.rs" as rocStdBox : Str,
         "../../roc_std/src/roc_list.rs" as rocStdList : Str,
-        "../../roc_std/src/roc_dict.rs" as rocStdDict : Str,
-        "../../roc_std/src/roc_set.rs" as rocStdSet : Str,
         "../../roc_std/src/roc_str.rs" as rocStdStr : Str,
         "../../roc_std/src/storage.rs" as rocStdStorage : Str,
     ]
@@ -48,8 +46,6 @@ staticFiles = [
     { name: "roc_std/src/lib.rs", content: rocStdLib },
     { name: "roc_std/src/roc_box.rs", content: rocStdBox },
     { name: "roc_std/src/roc_list.rs", content: rocStdList },
-    { name: "roc_std/src/roc_dict.rs", content: rocStdDict },
-    { name: "roc_std/src/roc_set.rs", content: rocStdSet },
     { name: "roc_std/src/roc_str.rs", content: rocStdStr },
     { name: "roc_std/src/storage.rs", content: rocStdStorage },
 ]
@@ -1974,15 +1970,17 @@ typeName = \types, id ->
         Num F64 -> "f64"
         Num Dec -> "roc_std:RocDec"
         RocDict key value ->
-            keyName = typeName types key
-            valueName = typeName types value
+            # keyName = typeName types key
+            # valueName = typeName types value
 
-            "roc_std::RocDict<$(keyName), $(valueName)>"
+            # "roc_std::RocDict<$(keyName), $(valueName)>"
+            crash "RocDict is not yet supported in rust"
 
         RocSet elem ->
-            elemName = typeName types elem
+            # elemName = typeName types elem
 
-            "roc_std::RocSet<$(elemName)>"
+            # "roc_std::RocSet<$(elemName)>"
+            crash "RocSet is not yet supported in rust"
 
         RocList elem ->
             elemName = typeName types elem
