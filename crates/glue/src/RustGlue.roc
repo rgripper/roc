@@ -1969,14 +1969,14 @@ typeName = \types, id ->
         Num F32 -> "f32"
         Num F64 -> "f64"
         Num Dec -> "roc_std:RocDec"
-        RocDict key value ->
+        RocDict _key _value ->
             # keyName = typeName types key
             # valueName = typeName types value
 
             # "roc_std::RocDict<$(keyName), $(valueName)>"
             crash "RocDict is not yet supported in rust"
 
-        RocSet elem ->
+        RocSet _elem ->
             # elemName = typeName types elem
 
             # "roc_std::RocSet<$(elemName)>"
