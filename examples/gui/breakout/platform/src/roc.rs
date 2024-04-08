@@ -2,10 +2,11 @@ use crate::graphics::colors::Rgba;
 use core::alloc::Layout;
 use core::ffi::c_void;
 use core::mem::{self, ManuallyDrop};
-use roc_std::{RocList, RocStr};
+use roc_std::{roc_refcounted_noop_impl, RocList, RocRefcounted, RocStr};
 use std::ffi::CStr;
 use std::fmt::Debug;
 use std::mem::MaybeUninit;
+use std::ops::DerefMut;
 use std::os::raw::c_char;
 use std::time::Duration;
 use winit::event::VirtualKeyCode;
@@ -233,6 +234,34 @@ pub struct RocElem {
     tag: RocElemTag,
 }
 
+impl RocRefcounted for RocElem {
+    fn inc(&mut self, n: usize) {
+        use RocElemTag::*;
+
+        unsafe {
+            match self.tag() {
+                Rect => self.entry.rect.deref_mut().inc(n),
+                Text => self.entry.text.deref_mut().inc(n),
+            }
+        }
+    }
+
+    fn dec(&mut self) {
+        use RocElemTag::*;
+
+        unsafe {
+            match self.tag() {
+                Rect => self.entry.rect.deref_mut().dec(),
+                Text => self.entry.text.deref_mut().dec(),
+            }
+        }
+    }
+
+    fn is_refcounted() -> bool {
+        true
+    }
+}
+
 impl Debug for RocElem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use RocElemTag::*;
@@ -288,6 +317,7 @@ pub struct RocRect {
     pub top: f32,
     pub width: f32,
 }
+roc_refcounted_noop_impl!(RocRect);
 
 #[repr(C)]
 #[derive(Debug, Clone)]
@@ -297,6 +327,20 @@ pub struct RocText {
     pub left: f32,
     pub size: f32,
     pub top: f32,
+}
+
+impl RocRefcounted for RocText {
+    fn inc(&mut self, n: usize) {
+        self.text.inc(n);
+    }
+
+    fn dec(&mut self) {
+        self.text.dec();
+    }
+
+    fn is_refcounted() -> bool {
+        true
+    }
 }
 
 impl Clone for RocElem {
