@@ -47,6 +47,8 @@ pub enum LowLevel {
     ListGetCapacity,
     ListIsUnique,
     ListClone,
+    ListIncref,
+    ListDecref,
     NumAdd,
     NumAddWrap,
     NumAddChecked,
@@ -238,6 +240,8 @@ macro_rules! map_symbol_to_lowlevel {
                 LowLevel::RefCountIncDataPtr => unimplemented!(),
                 LowLevel::RefCountDecDataPtr=> unimplemented!(),
                 LowLevel::RefCountIsUnique => unimplemented!(),
+                LowLevel::ListIncref => unimplemented!(),
+                LowLevel::ListDecref => unimplemented!(),
 
                 LowLevel::SetJmp => unimplemented!(),
                 LowLevel::LongJmp => unimplemented!(),
