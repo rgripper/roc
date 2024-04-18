@@ -30,6 +30,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug)]
 pub struct LoadedModule {
     pub module_id: ModuleId,
+    pub header_doc_comment: String,
     pub interns: Interns,
     pub solved: Solved<Subs>,
     pub can_problems: MutMap<ModuleId, Vec<roc_problem::can::Problem>>,

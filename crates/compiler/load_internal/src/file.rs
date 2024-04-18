@@ -638,6 +638,7 @@ struct CanAndCon {
     constrained_module: ConstrainedModule,
     canonicalization_problems: Vec<roc_problem::can::Problem>,
     module_docs: Option<ModuleDocumentation>,
+    header_doc_comment: String,
 }
 
 #[derive(Debug)]
@@ -2521,6 +2522,7 @@ fn update<'a>(
             constrained_module,
             canonicalization_problems,
             module_docs,
+            header_doc_comment,
         }) => {
             let module_id = constrained_module.module.module_id;
             log!("generated constraints for {:?}", module_id);
@@ -2539,6 +2541,11 @@ fn update<'a>(
                 .module_cache
                 .aliases
                 .insert(module_id, constrained_module.module.aliases.clone());
+
+            state
+                .module_cache
+                .header_doc_comments
+                .insert(module_id, header_doc_comment);
 
             state
                 .module_cache
@@ -3376,8 +3383,16 @@ fn finish(
 
     debug_assert_eq!(documentation.len(), 0);
 
+    let module_id = state.root_id;
+
+    let (_module_id, header_doc_comment) = state
+        .module_cache
+        .header_doc_comments
+        .remove(&module_id)
+        .unwrap();
+
     LoadedModule {
-        module_id: state.root_id,
+        module_id,
         interns,
         solved,
         can_problems: state.module_cache.can_problems,
@@ -3394,6 +3409,7 @@ fn finish(
         timings: state.timings,
         docs_by_module,
         abilities_store,
+        header_doc_comment,
     }
 }
 
@@ -5384,14 +5400,25 @@ fn canonicalize_and_constrain<'a>(
 
     module_timing.canonicalize = canonicalize_end.duration_since(canonicalize_start);
 
+    let mut header_doc_comment = String::new();
+
+    {
+        for comment_or_new_line in parsed.header_comments.iter() {
+            match comment_or_new_line {
+                CommentOrNewline::DocComment(doc_str) => {
+                    header_doc_comment.push_str(doc_str);
+                    header_doc_comment.push('\n');
+                }
+                CommentOrNewline::Newline | CommentOrNewline::LineComment(_) => {
+                    break;
+                }
+            }
+        }
+    };
+
     // Generate documentation information
     // TODO: store timing information?
     let module_docs = match header_type {
-        HeaderType::App { .. } => None,
-        HeaderType::Platform { .. } | HeaderType::Package { .. } => {
-            // TODO: actually generate docs for platform and package modules.
-            None
-        }
         HeaderType::Interface { name, .. }
         | HeaderType::Builtin { name, .. }
         | HeaderType::Hosted { name, .. }
@@ -5407,13 +5434,22 @@ fn canonicalize_and_constrain<'a>(
                 &parsed_defs_for_docs,
                 exposed_module_ids,
                 module_output.exposed_symbols.clone(),
-                parsed.header_comments,
+                header_doc_comment,
             );
+
+            // Since we created module docs, don't separately store the header later later.
+            // (There is definitely some nicer way this could be organized!)
+            header_doc_comment = String::new();
 
             Some(docs)
         }
-        HeaderType::Interface { .. } | HeaderType::Builtin { .. } | HeaderType::Hosted { .. } => {
-            // This module isn't exposed by the platform, so don't generate docs for it!
+        HeaderType::App { .. }
+        | HeaderType::Platform { .. }
+        | HeaderType::Package { .. }
+        | HeaderType::Interface { .. }
+        | HeaderType::Builtin { .. }
+        | HeaderType::Hosted { .. } => {
+            // This module is either a root module, or isn't exposed by the package, so don't generate docs for it!
             None
         }
     };
@@ -5509,6 +5545,7 @@ fn canonicalize_and_constrain<'a>(
         constrained_module,
         canonicalization_problems: module_output.problems,
         module_docs,
+        header_doc_comment,
     }
 }
 
