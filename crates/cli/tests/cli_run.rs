@@ -992,7 +992,7 @@ mod cli_run {
     #[cfg_attr(windows, ignore)]
     fn ingested_file_bytes_no_ann() {
         test_roc_app(
-            "examples/cli",
+            "crates/cli/tests/cli/",
             "ingested-file-bytes-no-ann.roc",
             &[],
             &[],
