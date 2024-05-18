@@ -1,0 +1,42 @@
+[package]
+name = "roc_transformer"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "roc_transformer"
+path = "src/transform.rs"
+
+[dependencies]
+roc_can = { path = "../compiler/can" }
+roc_collections = { path = "../compiler/collections" }
+roc_fmt = { path = "../compiler/fmt" }
+roc_load = { path = "../compiler/load" }
+roc_module = { path = "../compiler/module" }
+roc_parse = { path = "../compiler/parse" }
+roc_problem = { path = "../compiler/problem" }
+roc_region = { path = "../compiler/region" }
+roc_reporting = { path = "../reporting" }
+roc_solve_problem = { path = "../compiler/solve_problem" }
+roc_target = { path = "../compiler/roc_target" }
+roc_types = { path = "../compiler/types" }
+roc_packaging = { path = "../packaging" }
+serde_json = { version = "1.0" }
+serde = { version = "1.0" }
+bumpalo.workspace = true
+parking_lot.workspace = true
+
+tower-lsp = "0.17.0"
+tokio = { version = "1.20.1", features = [
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "io-std",
+] }
+
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
